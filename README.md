@@ -33,7 +33,7 @@ Or from a git URL:
 Run the setup skill inside Claude Code:
 
 ```
-/computer:setup
+/linux-computer:setup
 ```
 
 Or install manually (Debian/Ubuntu):
@@ -65,8 +65,8 @@ sudo apt install -y xdotool scrot imagemagick
 
 | Skill | Description |
 |-------|-------------|
-| `/computer:status` | Check plugin health — display server, dependencies, screen resolution, visible windows |
-| `/computer:setup` | Guided installation of system dependencies with distro detection |
+| `/linux-computer:status` | Check plugin health — display server, dependencies, screen resolution, visible windows |
+| `/linux-computer:setup` | Guided installation of system dependencies with distro detection |
 
 ## Wayland
 

@@ -5,7 +5,7 @@ user-invocable: true
 allowed-tools: [Bash, Read]
 ---
 
-# /computer:status
+# /linux-computer:status
 
 Check the health and readiness of the Linux computer-use plugin.
 
@@ -33,4 +33,4 @@ echo "$XDG_SESSION_TYPE"
 
 - If the value is `wayland`, warn the user: "You are running a Wayland session. This plugin requires X11 for full functionality. Some operations may work under XWayland, but for best results log out and select an X11/Xorg session from your display manager."
 
-4. If any dependencies are missing, suggest running `/computer:setup` to install them.
+4. If any dependencies are missing, suggest running `/linux-computer:setup` to install them.

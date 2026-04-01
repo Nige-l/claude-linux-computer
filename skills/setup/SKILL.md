@@ -5,7 +5,7 @@ user-invocable: true
 allowed-tools: [Bash, Read]
 ---
 
-# /computer:setup
+# /linux-computer:setup
 
 Guide the user through installing dependencies for the Linux computer-use plugin.
 
@@ -53,4 +53,4 @@ Only include missing packages in the install command. Tell the user the exact co
 
 After installation, re-run the dependency checks from step 2 to confirm everything is working. If all required deps are present, report success.
 
-Suggest running `/computer:status` for a full health check.
+Suggest running `/linux-computer:status` for a full health check.

@@ -299,7 +299,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   } catch (err: any) {
     const msg = err?.message ?? String(err)
     return {
-      content: [{ type: 'text', text: `Error running ${name}: ${msg}\n\nIf dependencies are missing, try running /computer:setup.` }],
+      content: [{ type: 'text', text: `Error running ${name}: ${msg}\n\nIf dependencies are missing, try running /linux-computer:setup.` }],
       isError: true,
     }
   }

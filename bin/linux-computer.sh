@@ -142,6 +142,20 @@ require_import() {
     fi
 }
 
+require_convert() {
+    if ! command -v convert &>/dev/null; then
+        err "ImageMagick 'convert' not found. Install with: sudo apt install imagemagick"
+        exit 1
+    fi
+}
+
+require_tesseract() {
+    if ! command -v tesseract &>/dev/null; then
+        err "tesseract not found. Install with: sudo apt install tesseract-ocr"
+        exit 1
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Window helpers
 # ---------------------------------------------------------------------------
@@ -875,6 +889,329 @@ cmd_wait() {
 }
 
 # ---------------------------------------------------------------------------
+# find-text <text> [--window <pattern>]
+# OCR the screen/window, find text, return bounding box center coordinates.
+# ---------------------------------------------------------------------------
+
+cmd_find_text() {
+    acquire_desktop_lock
+    local search_text=""
+    OPT_WINDOW=""
+
+    local args=("$@")
+    while [[ ${#args[@]} -gt 0 ]]; do
+        case "${args[0]}" in
+            --window)
+                OPT_WINDOW="${args[1]:?--window requires a value}"
+                args=("${args[@]:2}")
+                ;;
+            --window=*)
+                OPT_WINDOW="${args[0]#--window=}"
+                args=("${args[@]:1}")
+                ;;
+            *)
+                [[ -z "$search_text" ]] && search_text="${args[0]}"
+                args=("${args[@]:1}")
+                ;;
+        esac
+    done
+
+    if [[ -z "$search_text" ]]; then
+        err "Usage: linux-computer find-text <text> [--window <pattern>]"
+        exit 1
+    fi
+
+    require_tesseract
+    ensure_dirs
+
+    # Capture screenshot to a temp file
+    local tmp_png="$OUTPUT_DIR/ocr_tmp_$$.png"
+    local trap_cleanup="rm -f '$tmp_png'"
+    trap "$trap_cleanup" EXIT
+
+    if [[ -n "$OPT_WINDOW" ]]; then
+        require_import
+        local wid
+        wid=$(find_window_id "$OPT_WINDOW") || {
+            err "No window found matching: $OPT_WINDOW"
+            exit 1
+        }
+        DISPLAY="$DISPLAY" import -window "$wid" "$tmp_png" 2>/dev/null || {
+            err "Failed to capture window for OCR"
+            exit 1
+        }
+    else
+        require_scrot
+        DISPLAY="$DISPLAY" scrot "$tmp_png" 2>/dev/null || {
+            err "Failed to capture screen for OCR"
+            exit 1
+        }
+    fi
+
+    # Run tesseract with TSV output for bounding boxes
+    local tsv_output
+    tsv_output=$(tesseract "$tmp_png" - -l eng tsv 2>/dev/null) || {
+        err "Tesseract OCR failed"
+        exit 1
+    }
+
+    # Search for matching text (case-insensitive) and collect bounding boxes
+    local search_lower
+    search_lower=$(printf '%s' "$search_text" | tr '[:upper:]' '[:lower:]')
+
+    local matches=()
+    while IFS=$'\t' read -r level page_num block_num par_num line_num word_num left top width height conf text; do
+        [[ "$level" == "level" ]] && continue  # skip header
+        [[ -z "$text" ]] && continue
+        local text_lower
+        text_lower=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+        if [[ "$text_lower" == *"$search_lower"* ]]; then
+            local cx=$(( left + width / 2 ))
+            local cy=$(( top + height / 2 ))
+            matches+=("$cx,$cy,$left,$top,$width,$height,$conf,$text")
+        fi
+    done <<< "$tsv_output"
+
+    rm -f "$tmp_png"
+    trap - EXIT
+
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        # Try multi-word match by reconstructing lines
+        local line_texts=()
+        local line_coords=()
+        local cur_line="" cur_left=99999 cur_top=99999 cur_right=0 cur_bottom=0
+        local prev_line_num=""
+
+        while IFS=$'\t' read -r level page_num block_num par_num line_num word_num left top width height conf text; do
+            [[ "$level" == "level" ]] && continue
+            [[ -z "$text" ]] && continue
+            if [[ "$line_num" != "$prev_line_num" && -n "$prev_line_num" ]]; then
+                local line_lower
+                line_lower=$(printf '%s' "$cur_line" | tr '[:upper:]' '[:lower:]')
+                if [[ "$line_lower" == *"$search_lower"* ]]; then
+                    local lw=$(( cur_right - cur_left ))
+                    local lh=$(( cur_bottom - cur_top ))
+                    local lcx=$(( cur_left + lw / 2 ))
+                    local lcy=$(( cur_top + lh / 2 ))
+                    matches+=("$lcx,$lcy,$cur_left,$cur_top,$lw,$lh,0,$cur_line")
+                fi
+                cur_line=""
+                cur_left=99999; cur_top=99999; cur_right=0; cur_bottom=0
+            fi
+            prev_line_num="$line_num"
+            [[ -n "$cur_line" ]] && cur_line="$cur_line "
+            cur_line="$cur_line$text"
+            [[ "$left" -lt "$cur_left" ]] && cur_left="$left"
+            [[ "$top" -lt "$cur_top" ]] && cur_top="$top"
+            local r=$(( left + width ))
+            local b=$(( top + height ))
+            [[ "$r" -gt "$cur_right" ]] && cur_right="$r"
+            [[ "$b" -gt "$cur_bottom" ]] && cur_bottom="$b"
+        done <<< "$tsv_output"
+
+        # Check last line
+        if [[ -n "$cur_line" ]]; then
+            local line_lower
+            line_lower=$(printf '%s' "$cur_line" | tr '[:upper:]' '[:lower:]')
+            if [[ "$line_lower" == *"$search_lower"* ]]; then
+                local lw=$(( cur_right - cur_left ))
+                local lh=$(( cur_bottom - cur_top ))
+                local lcx=$(( cur_left + lw / 2 ))
+                local lcy=$(( cur_top + lh / 2 ))
+                matches+=("$lcx,$lcy,$cur_left,$cur_top,$lw,$lh,0,$cur_line")
+            fi
+        fi
+    fi
+
+    log_action "find-text" "query='$search_text' matches=${#matches[@]}"
+
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        if [[ "$JSON_OUTPUT" == "true" ]]; then
+            printf '{"found":false,"query":"%s","matches":[]}\n' "$(json_str "$search_text")"
+        else
+            err "No text matching '$search_text' found on screen"
+        fi
+        exit 1
+    fi
+
+    if [[ "$JSON_OUTPUT" == "true" ]]; then
+        printf '{"found":true,"query":"%s","matches":[' "$(json_str "$search_text")"
+        local first=true
+        for m in "${matches[@]}"; do
+            IFS=',' read -r cx cy left top w h conf text <<< "$m"
+            [[ "$first" == "true" ]] || printf ','
+            first=false
+            printf '{"x":%d,"y":%d,"left":%d,"top":%d,"width":%d,"height":%d,"confidence":%s,"text":"%s"}' \
+                "$cx" "$cy" "$left" "$top" "$w" "$h" "$conf" "$(json_str "$text")"
+        done
+        printf ']}\n'
+    else
+        printf "Found %d match(es) for '%s':\n" "${#matches[@]}" "$search_text"
+        for m in "${matches[@]}"; do
+            IFS=',' read -r cx cy left top w h conf text <<< "$m"
+            printf "  '%s' — center: (%d, %d)  bbox: left=%d top=%d %dx%d  confidence=%s\n" \
+                "$text" "$cx" "$cy" "$left" "$top" "$w" "$h" "$conf"
+        done
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# cursor — report current mouse cursor position
+# ---------------------------------------------------------------------------
+
+cmd_cursor() {
+    require_xdotool
+
+    local loc
+    loc=$(DISPLAY="$DISPLAY" xdotool getmouselocation 2>/dev/null) || {
+        err "Failed to get cursor position — is DISPLAY=$DISPLAY accessible?"
+        exit 1
+    }
+
+    local x y screen_num
+    x=$(printf '%s' "$loc" | grep -oP 'x:\K\d+')
+    y=$(printf '%s' "$loc" | grep -oP 'y:\K\d+')
+    screen_num=$(printf '%s' "$loc" | grep -oP 'screen:\K\d+' || printf "0")
+
+    log_action "cursor" "x=$x y=$y"
+
+    if [[ "$JSON_OUTPUT" == "true" ]]; then
+        printf '{"x":%d,"y":%d,"screen":%d}\n' "$x" "$y" "$screen_num"
+    else
+        printf "Cursor position: (%d, %d) on screen %d\n" "$x" "$y" "$screen_num"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# grid-screenshot [--window <pattern>] [--spacing <px>] [--output <path>]
+# Takes a screenshot with a coordinate grid overlay.
+# ---------------------------------------------------------------------------
+
+cmd_grid_screenshot() {
+    acquire_desktop_lock
+    local args=("$@")
+    OPT_WINDOW=""
+    OPT_OUTPUT=""
+    DRY_RUN=false
+    local spacing=100
+
+    while [[ ${#args[@]} -gt 0 ]]; do
+        case "${args[0]}" in
+            --window)
+                OPT_WINDOW="${args[1]:?--window requires a value}"
+                args=("${args[@]:2}")
+                ;;
+            --window=*)
+                OPT_WINDOW="${args[0]#--window=}"
+                args=("${args[@]:1}")
+                ;;
+            --output)
+                OPT_OUTPUT="${args[1]:?--output requires a value}"
+                args=("${args[@]:2}")
+                ;;
+            --output=*)
+                OPT_OUTPUT="${args[0]#--output=}"
+                args=("${args[@]:1}")
+                ;;
+            --spacing)
+                spacing="${args[1]:?--spacing requires a value}"
+                args=("${args[@]:2}")
+                ;;
+            --spacing=*)
+                spacing="${args[0]#--spacing=}"
+                args=("${args[@]:1}")
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                args=("${args[@]:1}")
+                ;;
+            *)
+                args=("${args[@]:1}")
+                ;;
+        esac
+    done
+
+    require_convert
+    ensure_dirs
+
+    local ts
+    ts="$(date +%Y%m%d_%H%M%S_%N | cut -c1-20)"
+    local out_path="${OPT_OUTPUT:-$OUTPUT_DIR/grid_${ts}.png}"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        info "[dry-run] Would capture grid screenshot to: $out_path"
+        [[ "$JSON_OUTPUT" == "true" ]] && json_kv "path" "$out_path"
+        return 0
+    fi
+
+    # First take a normal screenshot
+    local tmp_png="$OUTPUT_DIR/grid_raw_$$.png"
+
+    if [[ -n "$OPT_WINDOW" ]]; then
+        require_import
+        local wid
+        wid=$(find_window_id "$OPT_WINDOW") || {
+            err "No window found matching: $OPT_WINDOW"
+            exit 1
+        }
+        DISPLAY="$DISPLAY" import -window "$wid" "$tmp_png" 2>/dev/null || {
+            err "import failed for window $wid"
+            exit 1
+        }
+    else
+        require_scrot
+        DISPLAY="$DISPLAY" scrot "$tmp_png" 2>/dev/null || {
+            err "scrot failed"
+            exit 1
+        }
+    fi
+
+    # Get image dimensions
+    local img_w img_h
+    img_w=$(identify -format '%w' "$tmp_png" 2>/dev/null)
+    img_h=$(identify -format '%h' "$tmp_png" 2>/dev/null)
+
+    # Build ImageMagick draw commands for grid lines and labels
+    local draw_cmds=""
+
+    # Vertical lines + x labels
+    for (( x=0; x<=img_w; x+=spacing )); do
+        draw_cmds="$draw_cmds line $x,0 $x,$img_h"
+        if [[ $x -gt 0 ]]; then
+            draw_cmds="$draw_cmds text $(( x + 2 )),12 '$x'"
+        fi
+    done
+
+    # Horizontal lines + y labels
+    for (( y=0; y<=img_h; y+=spacing )); do
+        draw_cmds="$draw_cmds line 0,$y $img_w,$y"
+        if [[ $y -gt 0 ]]; then
+            draw_cmds="$draw_cmds text 2,$(( y - 2 )) '$y'"
+        fi
+    done
+
+    convert "$tmp_png" \
+        -fill 'rgba(255,0,0,0.3)' -stroke 'rgba(255,0,0,0.3)' -strokewidth 1 \
+        -font Helvetica -pointsize 10 \
+        -draw "$draw_cmds" \
+        "$out_path" 2>/dev/null || {
+        err "Failed to draw grid overlay"
+        rm -f "$tmp_png"
+        exit 1
+    }
+
+    rm -f "$tmp_png"
+
+    log_action "grid-screenshot" "$out_path (spacing=${spacing}px)"
+
+    if [[ "$JSON_OUTPUT" == "true" ]]; then
+        json_kv "path" "$out_path"
+    else
+        printf '%s\n' "$out_path"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # status — generic system status (display, deps, resolution, visible windows)
 # ---------------------------------------------------------------------------
 
@@ -1043,6 +1380,16 @@ Commands:
   scroll <x> <y> <direction> [clicks] [--window <pattern>]
       Scroll at coordinates. Direction: up/down/left/right. Default: 3 clicks.
 
+  find-text <text> [--window <pattern>]
+      OCR the screen/window to find text, returns center coordinates.
+      Requires: tesseract-ocr
+
+  cursor
+      Report current mouse cursor position.
+
+  grid-screenshot [--window <pattern>] [--spacing <px>]
+      Screenshot with coordinate grid overlay (default spacing: 100px).
+
   wait <milliseconds>
       Sleep for the specified duration.
 
@@ -1056,7 +1403,7 @@ Global flags:
   --json        Output results as JSON objects (for programmatic use).
   --help, -h    Show this help message.
 
-Dependencies: xdotool, scrot, imagemagick (import)
+Dependencies: xdotool, scrot, imagemagick (import/convert), tesseract-ocr (optional)
 USAGE
 }
 
@@ -1084,18 +1431,21 @@ set -- "${args[@]+"${args[@]}"}"
 # ---------------------------------------------------------------------------
 
 case "${1:-}" in
-    screenshot)      shift; cmd_screenshot "$@" ;;
-    find-window)     shift; cmd_find_window "$@" ;;
-    focus)           shift; cmd_focus "$@" ;;
-    click)           shift; cmd_click "$@" ;;
-    type)            shift; cmd_type "$@" ;;
-    key)             shift; cmd_key "$@" ;;
-    move)            shift; cmd_move "$@" ;;
-    drag)            shift; cmd_drag "$@" ;;
-    scroll)          shift; cmd_scroll "$@" ;;
-    wait)            shift; cmd_wait "$@" ;;
-    status)          shift; cmd_status ;;
-    lock-status)     cmd_lock_status ;;
+    screenshot)       shift; cmd_screenshot "$@" ;;
+    grid-screenshot)  shift; cmd_grid_screenshot "$@" ;;
+    find-window)      shift; cmd_find_window "$@" ;;
+    find-text)        shift; cmd_find_text "$@" ;;
+    focus)            shift; cmd_focus "$@" ;;
+    click)            shift; cmd_click "$@" ;;
+    type)             shift; cmd_type "$@" ;;
+    key)              shift; cmd_key "$@" ;;
+    move)             shift; cmd_move "$@" ;;
+    drag)             shift; cmd_drag "$@" ;;
+    scroll)           shift; cmd_scroll "$@" ;;
+    wait)             shift; cmd_wait "$@" ;;
+    cursor)           shift; cmd_cursor ;;
+    status)           shift; cmd_status ;;
+    lock-status)      cmd_lock_status ;;
     --help|-h|help|"") cmd_usage ;;
-    *)               err "Unknown command: $1"; cmd_usage; exit 1 ;;
+    *)                err "Unknown command: $1"; cmd_usage; exit 1 ;;
 esac

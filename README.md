@@ -10,14 +10,15 @@ Take screenshots, click, type, move the mouse, manage windows — all from Claud
 - **[Bun](https://bun.sh)** — the MCP server runs on Bun
 - **xdotool** — click, type, key, mouse, and window operations
 - **scrot** — screenshots
-- **imagemagick** (optional) — image processing
+- **imagemagick** — image processing and grid overlays
+- **tesseract-ocr** — OCR for `find_text` tool
 
 ## Quick Start
 
 **1. Install system dependencies** (Debian/Ubuntu):
 
 ```sh
-sudo apt install -y xdotool scrot imagemagick
+sudo apt install -y xdotool scrot imagemagick tesseract-ocr
 ```
 
 **2. Install the plugin.**
@@ -53,6 +54,9 @@ This loads the plugin for a single session without installing it globally.
 | `scroll` | Scroll at screen coordinates | `x`, `y`, `direction` (up/down/left/right), `clicks`, `window` |
 | `find_window` | Find windows matching a name pattern | `pattern` |
 | `focus_window` | Focus (activate) a window by name or ID | `target` |
+| `find_text` | OCR the screen to locate text, returns center coordinates | `text`, `window` |
+| `cursor_position` | Get current mouse cursor position | — |
+| `grid_screenshot` | Screenshot with coordinate grid overlay | `window`, `spacing` |
 | `computer_status` | Get display and system status | — |
 
 ## Skills
@@ -61,6 +65,8 @@ This loads the plugin for a single session without installing it globally.
 |-------|-------------|
 | `/linux-computer:status` | Check plugin health — display server, dependencies, screen resolution, visible windows |
 | `/linux-computer:setup` | Guided installation of system dependencies with distro detection |
+| `/linux-computer:find-and-click` | Locate a UI element by text label (OCR) and click on it |
+| `/linux-computer:interact` | Interactive desktop session — observe screen and perform actions |
 
 ## Wayland
 

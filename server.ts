@@ -180,6 +180,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {},
       },
     },
+    {
+      name: 'find_text',
+      description: 'Find text on screen using OCR (tesseract). Returns the center coordinates of each match — use these coordinates to click on UI elements by their label. Much more accurate than guessing coordinates from a screenshot.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          text: { type: 'string', description: 'Text to search for (case-insensitive)' },
+          window: { type: 'string', description: 'Window name pattern to search in. Omit for full screen.' },
+        },
+        required: ['text'],
+      },
+    },
+    {
+      name: 'cursor_position',
+      description: 'Get the current mouse cursor position on screen.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {},
+      },
+    },
+    {
+      name: 'grid_screenshot',
+      description: 'Take a screenshot with a coordinate grid overlay drawn on top. Useful for estimating click coordinates more accurately. Grid lines are labeled with pixel values.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          window: { type: 'string', description: 'Window name pattern to capture. Omit for full screen.' },
+          spacing: { type: 'number', description: 'Grid line spacing in pixels. Default: 100.' },
+        },
+      },
+    },
   ],
 }))
 
@@ -291,6 +322,52 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'computer_status': {
         const cmdArgs = ['status', '--json']
         return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'find_text': {
+        const cmdArgs = ['find-text', String(args?.text)]
+        if (args?.window) cmdArgs.push('--window', String(args.window))
+        cmdArgs.push('--json')
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'cursor_position': {
+        const cmdArgs = ['cursor', '--json']
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'grid_screenshot': {
+        const cmdArgs = ['grid-screenshot']
+        if (args?.window) cmdArgs.push('--window', String(args.window))
+        if (args?.spacing !== undefined) cmdArgs.push('--spacing', String(args.spacing))
+        cmdArgs.push('--json')
+        const result = await runScript(cmdArgs)
+        if (result.exitCode !== 0) {
+          return { content: [{ type: 'text', text: result.stderr || result.stdout || 'Grid screenshot failed' }], isError: true }
+        }
+        let filePath: string
+        try {
+          const parsed = JSON.parse(result.stdout)
+          filePath = parsed.path || parsed.file
+        } catch {
+          filePath = result.stdout
+        }
+        if (!filePath || !filePath.endsWith('.png')) {
+          return { content: [{ type: 'text', text: `Grid screenshot failed: ${result.stderr || result.stdout}` }], isError: true }
+        }
+        let imageBuffer: Buffer
+        try {
+          imageBuffer = await readFile(filePath)
+        } catch (e: any) {
+          return { content: [{ type: 'text', text: `Grid screenshot file not found: ${filePath}\n${e.message}` }], isError: true }
+        }
+        const base64 = imageBuffer.toString('base64')
+        return {
+          content: [
+            { type: 'image', data: base64, mimeType: 'image/png' },
+            { type: 'text', text: `Grid screenshot saved to: ${filePath}` },
+          ],
+        }
       }
 
       default:

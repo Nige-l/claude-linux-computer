@@ -30,11 +30,13 @@ Run each check and note which are missing:
 command -v xdotool && xdotool --version
 command -v scrot && scrot --version
 command -v convert && convert --version | head -1
+command -v tesseract && tesseract --version | head -1
 ```
 
 - **xdotool** — required for click, type, key, mouse, and window operations
 - **scrot** — required for screenshots
-- **imagemagick** (provides `convert`) — optional, used for image processing
+- **imagemagick** (provides `convert`, `import`, `identify`) — required for window capture and grid screenshots
+- **tesseract-ocr** — required for `find_text` (OCR-based element targeting)
 
 ### 3. Detect package manager and install missing packages
 
@@ -42,10 +44,10 @@ Check which package manager is available:
 
 | Distro | Check | Install command |
 |--------|-------|----------------|
-| Debian/Ubuntu | `command -v apt` | `sudo apt update && sudo apt install -y xdotool scrot imagemagick` |
-| Fedora | `command -v dnf` | `sudo dnf install -y xdotool scrot ImageMagick` |
-| Arch | `command -v pacman` | `sudo pacman -S --noconfirm xdotool scrot imagemagick` |
-| openSUSE | `command -v zypper` | `sudo zypper install -y xdotool scrot ImageMagick` |
+| Debian/Ubuntu | `command -v apt` | `sudo apt update && sudo apt install -y xdotool scrot imagemagick tesseract-ocr` |
+| Fedora | `command -v dnf` | `sudo dnf install -y xdotool scrot ImageMagick tesseract` |
+| Arch | `command -v pacman` | `sudo pacman -S --noconfirm xdotool scrot imagemagick tesseract` |
+| openSUSE | `command -v zypper` | `sudo zypper install -y xdotool scrot ImageMagick tesseract-ocr` |
 
 Only include missing packages in the install command. Tell the user the exact command and ask for confirmation before running it (since it requires sudo).
 

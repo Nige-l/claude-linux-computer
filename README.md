@@ -23,7 +23,7 @@ Install the plugin in Claude Code:
 Or from a git URL:
 
 ```
-/plugin install https://github.com/Nige-l/ClaudeComputerUbuntu
+/plugin install https://github.com/Nige-l/claude-linux-computer
 ```
 
 ## Quick Start

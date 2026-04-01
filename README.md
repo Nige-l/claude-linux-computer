@@ -12,39 +12,33 @@ Take screenshots, click, type, move the mouse, manage windows — all from Claud
 - **scrot** — screenshots
 - **imagemagick** (optional) — image processing
 
-## Installation
-
-Install the plugin in Claude Code:
-
-```
-/plugin install /path/to/claude-linux-computer
-```
-
-Or from a git URL:
-
-```
-/plugin install https://github.com/Nige-l/claude-linux-computer
-```
-
 ## Quick Start
 
-**1. Install system dependencies.**
-
-Run the setup skill inside Claude Code:
-
-```
-/linux-computer:setup
-```
-
-Or install manually (Debian/Ubuntu):
+**1. Install system dependencies** (Debian/Ubuntu):
 
 ```sh
 sudo apt install -y xdotool scrot imagemagick
 ```
 
-**2. Install the plugin** (see Installation above).
+**2. Install the plugin.**
+
+Add the GitHub repo as a marketplace, then install:
+
+```sh
+claude plugin marketplace add https://github.com/Nige-l/claude-linux-computer
+claude plugin install linux-computer
+```
 
 **3. Use the tools.** Ask Claude to take a screenshot, click a button, type text, or manage windows. The tools are available automatically once the plugin is installed.
+
+### Alternative: local install from a clone
+
+```sh
+git clone https://github.com/Nige-l/claude-linux-computer.git
+claude --plugin-dir ./claude-linux-computer
+```
+
+This loads the plugin for a single session without installing it globally.
 
 ## Tools
 

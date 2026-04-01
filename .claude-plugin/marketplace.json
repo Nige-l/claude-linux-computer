@@ -1,0 +1,14 @@
+{
+  "name": "claude-linux-computer",
+  "owner": {
+    "name": "Nigel Johnson"
+  },
+  "plugins": [
+    {
+      "name": "linux-computer",
+      "description": "Linux computer-use tool for Claude Code — screenshot, click, type, keyboard, mouse, and window management via X11",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}

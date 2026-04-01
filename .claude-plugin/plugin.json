@@ -2,6 +2,9 @@
   "name": "linux-computer",
   "description": "Linux computer-use tool for Claude Code — screenshot, click, type, keyboard, mouse, and window management via X11. Open-source alternative to the Mac-only /computer.",
   "version": "0.1.0",
+  "author": {
+    "name": "Nigel Johnson"
+  },
   "keywords": [
     "computer",
     "linux",

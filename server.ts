@@ -32,15 +32,40 @@ process.on('uncaughtException', err => {
 // Helper: run the bash script and capture output
 // ---------------------------------------------------------------------------
 
+const SCRIPT_TIMEOUT_MS = 30_000
+
 async function runScript(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const proc = Bun.spawn(['bash', SCRIPT, ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
     env: { ...process.env },
   })
-  const stdout = await new Response(proc.stdout).text()
-  const stderr = await new Response(proc.stderr).text()
-  const exitCode = await proc.exited
+
+  let timeoutId: ReturnType<typeof setTimeout>
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      proc.kill()
+      reject(new Error(`Script timed out after ${SCRIPT_TIMEOUT_MS / 1000}s`))
+    }, SCRIPT_TIMEOUT_MS)
+  })
+
+  let result: [string, string, number]
+  try {
+    result = await Promise.race([
+      Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]),
+      timeout,
+    ])
+  } catch (err) {
+    clearTimeout(timeoutId!)
+    throw err
+  }
+  clearTimeout(timeoutId!)
+  const [stdout, stderr, exitCode] = result
+
   return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode }
 }
 
@@ -256,6 +281,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
+        if (imageBuffer.length === 0) {
+          return {
+            content: [{ type: 'text', text: `Screenshot file is empty: ${filePath}` }],
+            isError: true,
+          }
+        }
         const base64 = imageBuffer.toString('base64')
         return {
           content: [
@@ -266,7 +297,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'click': {
-        const cmdArgs = ['click', String(args?.x), String(args?.y)]
+        if (typeof args?.x !== 'number' || typeof args?.y !== 'number') {
+          return { content: [{ type: 'text', text: 'click: x and y are required and must be numbers' }], isError: true }
+        }
+        const cmdArgs = ['click', String(args.x), String(args.y)]
         if (args?.button) cmdArgs.push('--button', String(args.button))
         if (args?.window) cmdArgs.push('--window', String(args.window))
         cmdArgs.push('--json')
@@ -274,35 +308,61 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'type': {
-        const cmdArgs = ['type', String(args?.text)]
+        if (typeof args?.text !== 'string' || args.text === '') {
+          return { content: [{ type: 'text', text: 'type: text is required and must be a non-empty string' }], isError: true }
+        }
+        const cmdArgs = ['type', args.text]
         if (args?.window) cmdArgs.push('--window', String(args.window))
         cmdArgs.push('--json')
         return formatResult(await runScript(cmdArgs))
       }
 
       case 'key': {
-        const cmdArgs = ['key', String(args?.key)]
+        if (typeof args?.key !== 'string' || args.key === '') {
+          return { content: [{ type: 'text', text: 'key: key is required and must be a non-empty string' }], isError: true }
+        }
+        const cmdArgs = ['key', args.key]
         if (args?.window) cmdArgs.push('--window', String(args.window))
         cmdArgs.push('--json')
         return formatResult(await runScript(cmdArgs))
       }
 
       case 'mouse_move': {
-        const cmdArgs = ['move', String(args?.x), String(args?.y)]
+        if (typeof args?.x !== 'number' || typeof args?.y !== 'number') {
+          return { content: [{ type: 'text', text: 'mouse_move: x and y are required and must be numbers' }], isError: true }
+        }
+        const cmdArgs = ['move', String(args.x), String(args.y)]
         if (args?.window) cmdArgs.push('--window', String(args.window))
         cmdArgs.push('--json')
         return formatResult(await runScript(cmdArgs))
       }
 
       case 'drag': {
-        const cmdArgs = ['drag', String(args?.start_x), String(args?.start_y), String(args?.end_x), String(args?.end_y)]
+        if (typeof args?.start_x !== 'number' || typeof args?.start_y !== 'number' ||
+            typeof args?.end_x !== 'number' || typeof args?.end_y !== 'number') {
+          return { content: [{ type: 'text', text: 'drag: start_x, start_y, end_x, end_y are required and must be numbers' }], isError: true }
+        }
+        const cmdArgs = ['drag', String(args.start_x), String(args.start_y), String(args.end_x), String(args.end_y)]
         if (args?.window) cmdArgs.push('--window', String(args.window))
         cmdArgs.push('--json')
         return formatResult(await runScript(cmdArgs))
       }
 
       case 'scroll': {
-        const cmdArgs = ['scroll', String(args?.x), String(args?.y), String(args?.direction)]
+        if (typeof args?.x !== 'number' || typeof args?.y !== 'number') {
+          return { content: [{ type: 'text', text: 'scroll: x and y are required and must be numbers' }], isError: true }
+        }
+        if (typeof args?.direction !== 'string' || args.direction === '') {
+          return { content: [{ type: 'text', text: 'scroll: direction is required and must be a non-empty string' }], isError: true }
+        }
+        const validDirections = ['up', 'down', 'left', 'right']
+        if (!validDirections.includes(args.direction)) {
+          return { content: [{ type: 'text', text: `scroll: direction must be one of: ${validDirections.join(', ')}` }], isError: true }
+        }
+        if (args?.clicks !== undefined && typeof args.clicks !== 'number') {
+          return { content: [{ type: 'text', text: 'scroll: clicks must be a number' }], isError: true }
+        }
+        const cmdArgs = ['scroll', String(args.x), String(args.y), args.direction]
         if (args?.clicks !== undefined) cmdArgs.push(String(args.clicks))
         if (args?.window) cmdArgs.push('--window', String(args.window))
         cmdArgs.push('--json')
@@ -310,12 +370,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'find_window': {
-        const cmdArgs = ['find-window', String(args?.pattern), '--json']
+        if (typeof args?.pattern !== 'string' || args.pattern === '') {
+          return { content: [{ type: 'text', text: 'find_window: pattern is required and must be a non-empty string' }], isError: true }
+        }
+        const cmdArgs = ['find-window', args.pattern, '--json']
         return formatResult(await runScript(cmdArgs))
       }
 
       case 'focus_window': {
-        const cmdArgs = ['focus', String(args?.target), '--json']
+        if (typeof args?.target !== 'string' || args.target === '') {
+          return { content: [{ type: 'text', text: 'focus_window: target is required and must be a non-empty string' }], isError: true }
+        }
+        const cmdArgs = ['focus', args.target, '--json']
         return formatResult(await runScript(cmdArgs))
       }
 
@@ -325,7 +391,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'find_text': {
-        const cmdArgs = ['find-text', String(args?.text)]
+        if (typeof args?.text !== 'string' || args.text === '') {
+          return { content: [{ type: 'text', text: 'find_text: text is required and must be a non-empty string' }], isError: true }
+        }
+        const cmdArgs = ['find-text', args.text]
         if (args?.window) cmdArgs.push('--window', String(args.window))
         cmdArgs.push('--json')
         return formatResult(await runScript(cmdArgs))
@@ -337,6 +406,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'grid_screenshot': {
+        if (args?.spacing !== undefined && typeof args.spacing !== 'number') {
+          return { content: [{ type: 'text', text: 'grid_screenshot: spacing must be a number' }], isError: true }
+        }
         const cmdArgs = ['grid-screenshot']
         if (args?.window) cmdArgs.push('--window', String(args.window))
         if (args?.spacing !== undefined) cmdArgs.push('--spacing', String(args.spacing))
@@ -360,6 +432,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           imageBuffer = await readFile(filePath)
         } catch (e: any) {
           return { content: [{ type: 'text', text: `Grid screenshot file not found: ${filePath}\n${e.message}` }], isError: true }
+        }
+        if (imageBuffer.length === 0) {
+          return { content: [{ type: 'text', text: `Grid screenshot file is empty: ${filePath}` }], isError: true }
         }
         const base64 = imageBuffer.toString('base64')
         return {

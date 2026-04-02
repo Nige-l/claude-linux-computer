@@ -217,7 +217,11 @@ resolve_window() {
     else
         local id
         id=$(find_window_id "$id_or_name") || {
-            err "No window found matching: $id_or_name"
+            if [[ "${JSON_OUTPUT}" == "true" ]]; then
+                json_result "error" "No window found matching: $id_or_name"
+            else
+                err "No window found matching: $id_or_name"
+            fi
             exit 1
         }
         printf '%s' "$id"
@@ -230,8 +234,8 @@ get_window_name() {
     xdotool getwindowname "$wid" 2>/dev/null || printf "(unknown)"
 }
 
-# Parse --window <pattern>, --button <N>, and --dry-run flags from args.
-# Sets globals: OPT_WINDOW, OPT_BUTTON, DRY_RUN. Remaining positional args in POSITIONAL.
+# Parse --window <pattern>, --button <N>, --dry-run, and --json flags from args.
+# Sets globals: OPT_WINDOW, OPT_BUTTON, DRY_RUN, JSON_OUTPUT. Remaining positional args in POSITIONAL.
 parse_action_flags() {
     OPT_WINDOW=""
     OPT_BUTTON=1
@@ -256,6 +260,10 @@ parse_action_flags() {
                 ;;
             --dry-run)
                 DRY_RUN=true
+                ;;
+            --json)
+                JSON_OUTPUT="true"
+                RED="" GREEN="" YELLOW="" CYAN="" BOLD="" DIM="" RESET=""
                 ;;
             *)
                 POSITIONAL+=("$1")
@@ -449,9 +457,27 @@ cmd_screenshot() {
 # ---------------------------------------------------------------------------
 
 cmd_find_window() {
-    local pattern="${1:-}"
+    # Parse --json from positional args before treating first arg as pattern.
+    local _fwargs=()
+    for _arg in "$@"; do
+        case "$_arg" in
+            --json)
+                JSON_OUTPUT="true"
+                RED="" GREEN="" YELLOW="" CYAN="" BOLD="" DIM="" RESET=""
+                ;;
+            *)
+                _fwargs+=("$_arg")
+                ;;
+        esac
+    done
+
+    local pattern="${_fwargs[0]:-}"
     if [[ -z "$pattern" ]]; then
-        err "Usage: linux-computer find-window <name_pattern>"
+        if [[ "$JSON_OUTPUT" == "true" ]]; then
+            json_result "error" "Usage: linux-computer find-window <name_pattern>"
+        else
+            err "Usage: linux-computer find-window <name_pattern>"
+        fi
         exit 1
     fi
 
@@ -461,7 +487,11 @@ cmd_find_window() {
     ids=$(xdotool search --name "$pattern" 2>/dev/null || true)
 
     if [[ -z "$ids" ]]; then
-        err "No windows found matching: $pattern"
+        if [[ "$JSON_OUTPUT" == "true" ]]; then
+            json_result "error" "No windows found matching: $pattern"
+        else
+            err "No windows found matching: $pattern"
+        fi
         exit 1
     fi
 
@@ -510,14 +540,29 @@ cmd_focus() {
     local target="${POSITIONAL[0]:-}"
 
     if [[ -z "$target" ]]; then
-        err "Usage: linux-computer focus <window_id_or_name>"
+        if [[ "$JSON_OUTPUT" == "true" ]]; then
+            json_result "error" "Usage: linux-computer focus <window_id_or_name>"
+        else
+            err "Usage: linux-computer focus <window_id_or_name>"
+        fi
         exit 1
     fi
 
     require_xdotool
 
     local wid
-    wid=$(resolve_window "$target")
+    if [[ "$target" =~ ^[0-9]+$ ]]; then
+        wid="$target"
+    else
+        wid=$(find_window_id "$target") || {
+            if [[ "$JSON_OUTPUT" == "true" ]]; then
+                json_result "error" "No window found matching: $target"
+            else
+                err "No window found matching: $target"
+            fi
+            exit 1
+        }
+    fi
     local wname
     wname=$(get_window_name "$wid")
 
@@ -681,7 +726,7 @@ cmd_key() {
         do_focus "$wid"
     fi
 
-    DISPLAY="$DISPLAY" xdotool key "$key"
+    DISPLAY="$DISPLAY" xdotool key -- "$key"
 
     log_action "key" "key=$key window=${OPT_WINDOW:-focused}"
     if [[ "$JSON_OUTPUT" == "true" ]]; then

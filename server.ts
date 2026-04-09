@@ -236,6 +236,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'crop_region',
+      description: 'Take a full-screen screenshot, crop the specified region, and scale it up. Returns the cropped image inline. Useful for inspecting small UI elements or specific screen areas in detail.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          x: { type: 'number', description: 'Left edge of the crop region in screen pixels.' },
+          y: { type: 'number', description: 'Top edge of the crop region in screen pixels.' },
+          width: { type: 'number', description: 'Width of the crop region in screen pixels.' },
+          height: { type: 'number', description: 'Height of the crop region in screen pixels.' },
+          scale: { type: 'number', description: 'Scale multiplier for the output image. Default: 2.' },
+        },
+        required: ['x', 'y', 'width', 'height'],
+      },
+    },
   ],
 }))
 
@@ -441,6 +456,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             { type: 'image', data: base64, mimeType: 'image/png' },
             { type: 'text', text: `Grid screenshot saved to: ${filePath}` },
+          ],
+        }
+      }
+
+      case 'crop_region': {
+        const cmdArgs = ['zoom', String(args?.x), String(args?.y), String(args?.width), String(args?.height)]
+        if (args?.scale !== undefined) cmdArgs.push('--scale', String(args.scale))
+        cmdArgs.push('--json')
+        const result = await runScript(cmdArgs)
+        if (result.exitCode !== 0) {
+          return { content: [{ type: 'text', text: result.stderr || result.stdout || 'Crop/zoom failed' }], isError: true }
+        }
+        let filePath: string
+        let outWidth: number | undefined
+        let outHeight: number | undefined
+        try {
+          const parsed = JSON.parse(result.stdout)
+          filePath = parsed.path || parsed.file
+          outWidth = parsed.width
+          outHeight = parsed.height
+        } catch {
+          filePath = result.stdout
+        }
+        if (!filePath || !filePath.endsWith('.png')) {
+          return { content: [{ type: 'text', text: `Crop/zoom failed: ${result.stderr || result.stdout}` }], isError: true }
+        }
+        let imageBuffer: Buffer
+        try {
+          imageBuffer = await readFile(filePath)
+        } catch (e: any) {
+          return { content: [{ type: 'text', text: `Cropped image not found: ${filePath}\n${e.message}` }], isError: true }
+        }
+        const base64 = imageBuffer.toString('base64')
+        const sizeNote = outWidth && outHeight ? ` (${outWidth}x${outHeight})` : ''
+        return {
+          content: [
+            { type: 'image', data: base64, mimeType: 'image/png' },
+            { type: 'text', text: `Cropped region saved to: ${filePath}${sizeNote}` },
           ],
         }
       }

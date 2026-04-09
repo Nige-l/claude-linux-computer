@@ -1257,6 +1257,118 @@ cmd_grid_screenshot() {
 }
 
 # ---------------------------------------------------------------------------
+# zoom/crop-region <x> <y> <width> <height> [--scale <N>] [--output <path>]
+# Takes a full screenshot, crops the specified region, scales it up.
+# ---------------------------------------------------------------------------
+
+cmd_zoom() {
+    local args=("$@")
+    local crop_x="" crop_y="" crop_w="" crop_h=""
+    local scale=2
+    OPT_OUTPUT=""
+    DRY_RUN=false
+
+    # First four positional args: x y width height
+    local positional=0
+    while [[ ${#args[@]} -gt 0 ]]; do
+        case "${args[0]}" in
+            --scale)
+                scale="${args[1]:?--scale requires a value}"
+                args=("${args[@]:2}")
+                ;;
+            --scale=*)
+                scale="${args[0]#--scale=}"
+                args=("${args[@]:1}")
+                ;;
+            --output)
+                OPT_OUTPUT="${args[1]:?--output requires a value}"
+                args=("${args[@]:2}")
+                ;;
+            --output=*)
+                OPT_OUTPUT="${args[0]#--output=}"
+                args=("${args[@]:1}")
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                args=("${args[@]:1}")
+                ;;
+            --*)
+                args=("${args[@]:1}")
+                ;;
+            *)
+                case $positional in
+                    0) crop_x="${args[0]}" ;;
+                    1) crop_y="${args[0]}" ;;
+                    2) crop_w="${args[0]}" ;;
+                    3) crop_h="${args[0]}" ;;
+                esac
+                positional=$(( positional + 1 ))
+                args=("${args[@]:1}")
+                ;;
+        esac
+    done
+
+    if [[ -z "$crop_x" || -z "$crop_y" || -z "$crop_w" || -z "$crop_h" ]]; then
+        err "zoom requires: <x> <y> <width> <height>"
+        exit 1
+    fi
+
+    require_convert
+    require_scrot
+    ensure_dirs
+
+    local ts
+    ts="$(date +%Y%m%d_%H%M%S_%N | cut -c1-20)"
+    local out_path="${OPT_OUTPUT:-$OUTPUT_DIR/zoom_${ts}.png}"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        info "[dry-run] Would crop ${crop_w}x${crop_h}+${crop_x}+${crop_y} scale=${scale}x to: $out_path"
+        if [[ "$JSON_OUTPUT" == "true" ]]; then
+            local out_w=$(( crop_w * scale ))
+            local out_h=$(( crop_h * scale ))
+            printf '{"path":"%s","width":%d,"height":%d}\n' "$(json_str "$out_path")" "$out_w" "$out_h"
+        else
+            printf '%s\n' "$out_path"
+        fi
+        return 0
+    fi
+
+    # Take a full-screen screenshot into a temp file
+    local tmp_png="$OUTPUT_DIR/zoom_raw_$$.png"
+    DISPLAY="$DISPLAY" scrot "$tmp_png" 2>/dev/null || {
+        err "scrot failed"
+        exit 1
+    }
+
+    # Crop and scale using ImageMagick
+    local scale_pct=$(( scale * 100 ))
+    convert "$tmp_png" \
+        -crop "${crop_w}x${crop_h}+${crop_x}+${crop_y}" \
+        +repage \
+        -resize "${scale_pct}%" \
+        "$out_path" 2>/dev/null || {
+        err "ImageMagick convert failed (crop+scale)"
+        rm -f "$tmp_png"
+        exit 1
+    }
+
+    rm -f "$tmp_png"
+
+    # Get actual output dimensions
+    local out_w out_h
+    out_w=$(identify -format '%w' "$out_path" 2>/dev/null || echo $(( crop_w * scale )))
+    out_h=$(identify -format '%h' "$out_path" 2>/dev/null || echo $(( crop_h * scale )))
+
+    log_action "zoom" "${crop_w}x${crop_h}+${crop_x}+${crop_y} scale=${scale}x -> $out_path"
+
+    if [[ "$JSON_OUTPUT" == "true" ]]; then
+        printf '{"path":"%s","width":%s,"height":%s}\n' "$(json_str "$out_path")" "$out_w" "$out_h"
+    else
+        printf '%s\n' "$out_path"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # status — generic system status (display, deps, resolution, visible windows)
 # ---------------------------------------------------------------------------
 
@@ -1435,6 +1547,10 @@ Commands:
   grid-screenshot [--window <pattern>] [--spacing <px>]
       Screenshot with coordinate grid overlay (default spacing: 100px).
 
+  zoom <x> <y> <width> <height> [--scale <N>]
+      Crop a region from a full-screen screenshot and scale it up (default scale: 2x).
+      Useful for inspecting small UI elements in detail.
+
   wait <milliseconds>
       Sleep for the specified duration.
 
@@ -1478,6 +1594,7 @@ set -- "${args[@]+"${args[@]}"}"
 case "${1:-}" in
     screenshot)       shift; cmd_screenshot "$@" ;;
     grid-screenshot)  shift; cmd_grid_screenshot "$@" ;;
+    zoom|crop-region) shift; cmd_zoom "$@" ;;
     find-window)      shift; cmd_find_window "$@" ;;
     find-text)        shift; cmd_find_text "$@" ;;
     focus)            shift; cmd_focus "$@" ;;
